@@ -1,12 +1,13 @@
 require 'socket'
 require 'health_checks/memory'
+require 'health_checks/mongoid_custom_client'
 
 module HealthChecks
   module_function
 
-  def sidekiq(config)
+  def sidekiq(config, mongoid_databases, redis_configs)
     config.on(:startup) do
-      LivenessServer.new.start
+      LivenessServer.new.start(mongoid_databases, redis_configs)
     end
   end
 
@@ -15,18 +16,21 @@ module HealthChecks
   class LivenessServer
     LIVENESS_PORT = 8080
 
-    def start
+    def start(mongoid_databases, redis_configs)
       Sidekiq::Logging.logger.info "Starting liveness server on #{LIVENESS_PORT}"
+
       Thread.start do
+        clients = create_clients(mongoid_databases)
         server = TCPServer.new(LIVENESS_PORT)
         loop do
           Thread.start(server.accept) do |socket|
             begin
               HealthChecks.memory
-              check_redis
-              check_mongo
+              check_mongoid_clients(clients)
+              check_redis_connections(redis_configs)
               respond_success(socket, 'Live!')
             rescue => e
+              log_error(e)
               respond_failure(socket, e.message)
             ensure
               socket.close
@@ -36,16 +40,29 @@ module HealthChecks
       end
     end
 
-    def check_redis
-      sidekiq_response = ::Sidekiq.redis(&:ping)
-      return if sidekiq_response == 'PONG'
+    def create_clients(mongoid_databases)
+      mongoid_databases.map do |db|
+        client_name = "#{db[:name]}_sidekiq_health_check"
+        client = MongoidCustomClient.create(client_name, db[:hosts])
 
-      raise "Sidekiq.redis.ping returned #{sidekiq_response.inspect} instead of PONG"
+        { db_name: db[:name], instance: client }
+      end
     end
 
-    def check_mongo
-      session = Mongoid::Clients.with_name(:default)
-      session.database_names
+    def check_mongoid_clients(clients)
+      db_name = ''
+      clients.each do |client|
+        db_name = client[:db_name]
+        client[:instance].command(dbStats: 1).first['db']
+      end
+    rescue => e
+      raise "#{e}, Database Name: #{db_name}"
+    end
+
+    def check_redis_connections(redis_configs)
+      redis_configs.each do |config|
+        Redis.new(config).ping
+      end
     end
 
     def respond_success(socket, response)
@@ -65,6 +82,10 @@ module HealthChecks
       HEREDOC
       socket.print "\r\n" # blank line as required by the protocol
       socket.print response
+    end
+
+    def log_error(error)
+      Sidekiq::Logging.logger.error "Error: #{error}"
     end
   end
 end
