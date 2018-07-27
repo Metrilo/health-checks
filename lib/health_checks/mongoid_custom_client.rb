@@ -1,7 +1,5 @@
 module MongoidCustomClient
-  module_function
-
-  def create(client_name, hosts)
+  def self.create(client_name, hosts)
     Mongoid::Config.clients[client_name] = {
       hosts: hosts,
       database: "#{client_name}_db",
