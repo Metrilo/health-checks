@@ -27,7 +27,7 @@ module HealthChecks
     end
 
     def check
-      mongodb_name # this is the method OkComputer::MongoidCheck check uses
+      mongodb_name # this is the method OkComputer::MongoidCheck#check uses
       mark_message "Connected to mongodb #{@db_name}"
     rescue => e
       mark_failure
