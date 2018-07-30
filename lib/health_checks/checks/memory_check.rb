@@ -1,5 +1,5 @@
 module HealthChecks
-  module Custom
+  module Checks
     class MemoryCheck
       MAX_MEMORY_USAGE = 75
 

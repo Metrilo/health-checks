@@ -1,7 +1,7 @@
 require 'socket'
-require 'health_checks/custom/memory_check'
-require 'health_checks/custom/mongoid_check'
-require 'health_checks/custom/redis_check'
+require 'health_checks/checks/memory_check'
+require 'health_checks/checks/mongoid_check'
+require 'health_checks/checks/redis_check'
 
 module HealthChecks
   module_function

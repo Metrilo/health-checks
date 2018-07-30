@@ -1,5 +1,5 @@
 module HealthChecks
-  module Custom
+  module Checks
     class MongoidCheck
       attr_reader :db_name
 

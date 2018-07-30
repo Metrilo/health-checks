@@ -1,5 +1,5 @@
 module HealthChecks
-  module Custom
+  module Checks
     class RedisCheck
       def initialize(config)
         @config = config
