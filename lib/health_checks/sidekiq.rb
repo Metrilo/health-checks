@@ -1,6 +1,7 @@
 require 'socket'
-require 'health_checks/memory'
-require 'health_checks/mongoid_custom_client'
+require 'health_checks/custom/memory_check'
+require 'health_checks/custom/mongoid_check'
+require 'health_checks/custom/redis_check'
 
 module HealthChecks
   module_function
@@ -20,14 +21,14 @@ module HealthChecks
       Sidekiq::Logging.logger.info "Starting liveness server on #{LIVENESS_PORT}"
 
       Thread.start do
-        clients = create_clients(mongo_databases)
+        checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
+        checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
+        checks << Checks::MemoryCheck.new
         server = TCPServer.new(LIVENESS_PORT)
         loop do
           Thread.start(server.accept) do |socket|
             begin
-              HealthChecks.memory
-              check_mongo_connections(clients)
-              check_redis_connections(redis_configs)
+              checks.each(&:run)
               respond_success(socket, 'Live!')
             rescue => e
               Sidekiq::Logging.logger.error e
@@ -36,35 +37,6 @@ module HealthChecks
               socket.close
             end
           end
-        end
-      end
-    end
-
-    def create_clients(mongo_databases)
-      mongo_databases.map do |db|
-        client_name = "#{db[:name]}_sidekiq_health_check"
-        client = MongoidCustomClient.create(client_name, db[:hosts])
-
-        { db_name: db[:name], instance: client }
-      end
-    end
-
-    def check_mongo_connections(clients)
-      clients.each do |client|
-        begin
-          client[:instance].command(dbStats: 1).first['db']
-        rescue => e
-          raise "#{e}, Database Name: #{client[:db_name]}"
-        end
-      end
-    end
-
-    def check_redis_connections(redis_configs)
-      redis_configs.each do |config|
-        begin
-          Redis.new(config).ping
-        rescue => e
-          raise "#{e}, Database Host: #{config[:host]}"
         end
       end
     end
