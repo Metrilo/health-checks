@@ -6,6 +6,7 @@ module HealthChecks
       end
 
       def run
+        @config[:connect_timeout] = 1
         Redis.new(@config).ping
       end
     end
