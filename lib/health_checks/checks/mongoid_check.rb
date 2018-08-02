@@ -22,7 +22,12 @@ module HealthChecks
         ::Mongoid::Config.clients[client_name] = {
           hosts: database[:hosts],
           database: "#{client_name}_db",
-          options: { server_selection_timeout: 1 }
+          options: {
+            server_selection_timeout: 1,
+            connect_timeout: 1,
+            socket_timeout: 1,
+            wait_queue_timeout: 1
+          }
         }
 
         ::Mongoid::Clients.with_name(client_name)
