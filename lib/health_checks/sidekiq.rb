@@ -1,3 +1,4 @@
+require 'benchmark'
 require 'socket'
 require 'health_checks/checks/memory_check'
 require 'health_checks/checks/mongoid_check'
@@ -27,11 +28,16 @@ module HealthChecks
         server = TCPServer.new(LIVENESS_PORT)
         loop do
           Thread.start(server.accept) do |socket|
+            elapsed_time = 0
             begin
-              checks.each(&:run)
+              checks.each do |check|
+                elapsed_time = Benchmark.measure { check.run }
+                Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
+              end
               respond_success(socket, 'Live!')
             rescue => e
               Sidekiq::Logging.logger.error e
+              Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
               respond_failure(socket, e.message)
             ensure
               socket.close
