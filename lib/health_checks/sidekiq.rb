@@ -18,33 +18,33 @@ module HealthChecks
   class LivenessServer
     LIVENESS_PORT = 8080
 
-    def start(mongo_databases, redis_configs)
-      Sidekiq::Logging.logger.info "Starting liveness server on #{LIVENESS_PORT}"
+    def start(mongo_databases, redis_configs, logger)
+      logger.info "Starting liveness server on #{LIVENESS_PORT}"
+      checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
+      checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
+      checks << Checks::MemoryCheck.new
 
-      Thread.start do
-        checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
-        checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
-        checks << Checks::MemoryCheck.new
-        server = TCPServer.new(LIVENESS_PORT)
-        loop do
-          Thread.start(server.accept) do |socket|
-            elapsed_time = 0
-            begin
-              checks.each do |check|
-                elapsed_time = Benchmark.measure { check.run }
-                Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
-              end
-              respond_success(socket, 'Live!')
-            rescue => e
-              Sidekiq::Logging.logger.error e
-              Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
-              respond_failure(socket, e.message)
-            ensure
-              socket.close
-            end
+      server = TCPServer.new(LIVENESS_PORT)
+
+      loop do
+        Thread.start(server.accept) do |socket|
+          elapsed_time = 0
+          checks.each do |check|
+            elapsed_time = Benchmark.measure { check.run }
+            logger.info "Time elapsed for #{check} was #{elapsed_time}"
+          rescue => e
+            logger.error e
+            logger.info "Time elapsed for #{check} was #{elapsed_time}"
+
+            respond_failure(socket, e.message)
           end
+
+          respond_success(socket, 'Live!')
+        ensure
+          socket.close
         end
       end
+      # end
     end
 
     def respond_success(socket, response)
