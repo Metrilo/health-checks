@@ -36,8 +36,7 @@ module HealthChecks
               end
               respond_success(socket, 'Live!')
             rescue => e
-              Sidekiq::Logging.logger.error e
-              Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
+              Sidekiq::Logging.logger.error "Health check failed with #{e.message}"
               respond_failure(socket, e.message)
             ensure
               socket.close
