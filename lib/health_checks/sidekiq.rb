@@ -1,5 +1,5 @@
 require 'benchmark'
-require 'socket'
+require 'fileutils'
 require 'health_checks/checks/memory_check'
 require 'health_checks/checks/mongoid_check'
 require 'health_checks/checks/redis_check'
@@ -7,62 +7,59 @@ require 'health_checks/checks/redis_check'
 module HealthChecks
   module_function
 
-  def sidekiq(config, mongo_databases, redis_configs)
+  def sidekiq(config, mongo_databases, redis_configs, sleep_seconds: 10)
     config.on(:startup) do
-      LivenessServer.new.start(mongo_databases, redis_configs)
+      LivenessThreadCheck.new.start(mongo_databases, redis_configs, sleep_seconds)
     end
   end
 
   private
 
-  class LivenessServer
-    LIVENESS_PORT = 8080
+  class LivenessThreadCheck
+    def start(mongo_databases, redis_configs, sleep_seconds)
+      logger = Sidekiq::Logging.logger
 
-    def start(mongo_databases, redis_configs)
-      Sidekiq::Logging.logger.info "Starting liveness server on #{LIVENESS_PORT}"
+      logger.info "Starting liveness thread with #{sleep_seconds} sleep delay"
 
-      Thread.start do
-        checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
-        checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
-        checks << Checks::MemoryCheck.new
-        server = TCPServer.new(LIVENESS_PORT)
-        loop do
-          Thread.start(server.accept) do |socket|
-            elapsed_time = 0
-            begin
-              checks.each do |check|
-                elapsed_time = Benchmark.measure { check.run }
-                Sidekiq::Logging.logger.info "Time elapsed for #{check} was #{elapsed_time}"
-              end
-              respond_success(socket, 'Live!')
-            rescue => e
-              Sidekiq::Logging.logger.error "Health check failed with #{e.message}"
-              respond_failure(socket, e.message)
-            ensure
-              socket.close
-            end
-          end
+      checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
+      checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
+      # checks << Checks::MemoryCheck.new
+
+      Thread.new do
+        elapsed_time = 0
+
+        failed = false
+
+        checks.each do |check|
+          elapsed_time = Benchmark.measure { check.run }
+          logger.info "Time elapsed for #{check} was #{elapsed_time}"
+        rescue => e
+          logger.error e
+          logger.info "Time elapsed for #{check} was #{elapsed_time}"
+
+          failed = true
+          break
         end
+
+        failed ? handle_fail : handle_success
+
+        sleep sleep_seconds
       end
     end
 
-    def respond_success(socket, response)
-      respond(socket, '200 OK', response)
+    def handle_fail
+      write_to_status_file('FAIL')
     end
 
-    def respond_failure(socket, response)
-      respond(socket, '500 Internal Server Error', response)
+    def handle_success
+      write_to_status_file('OK')
     end
 
-    def respond(socket, status, response)
-      socket.print <<~HEREDOC
-        HTTP/1.1 #{status}\r
-        Content-Type: text/plain\r
-        Content-Length: #{response.bytesize}\r
-        Connection: close\r
-      HEREDOC
-      socket.print "\r\n" # blank line as required by the protocol
-      socket.print response
+    def write_to_status_file(content)
+      f = File.new('/tmp/sidekiq_status.txt', 'w')
+      f.write(content)
+
+      f.close
     end
   end
 end
