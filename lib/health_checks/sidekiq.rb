@@ -15,6 +15,8 @@ module HealthChecks
 
   private
 
+  STATUS_FILE = '/tmp/sidekiq_ok'
+
   class LivenessThreadCheck
     def start(mongo_databases, redis_configs, sleep_seconds)
       logger = Sidekiq::Logging.logger
@@ -48,18 +50,11 @@ module HealthChecks
     end
 
     def handle_fail
-      write_to_status_file('FAIL')
+      FileUtils.rm(STATUS_FILE)
     end
 
     def handle_success
-      write_to_status_file('OK')
-    end
-
-    def write_to_status_file(content)
-      f = File.new('/tmp/sidekiq_status.txt', 'w')
-      f.write(content)
-
-      f.close
+      FileUtils.touch(STATUS_FILE)
     end
   end
 end
