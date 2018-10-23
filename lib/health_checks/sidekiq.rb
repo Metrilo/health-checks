@@ -9,15 +9,15 @@ module HealthChecks
 
   def sidekiq(config, mongo_databases, redis_configs, sleep_seconds: 10)
     config.on(:startup) do
-      LivenessThreadCheck.new.start(mongo_databases, redis_configs, sleep_seconds)
+      LivenessCheckThread.new.start(mongo_databases, redis_configs, sleep_seconds)
     end
   end
 
   private
 
-  STATUS_FILE = '/tmp/sidekiq_ok'
+  class LivenessCheckThread
+    STATUS_FILE = '/tmp/sidekiq_ok'
 
-  class LivenessThreadCheck
     def start(mongo_databases, redis_configs, sleep_seconds)
       logger = Sidekiq::Logging.logger
 
@@ -25,32 +25,30 @@ module HealthChecks
 
       checks = mongo_databases.map { |db| Checks::MongoidCheck.new(db) }
       checks += redis_configs.map{ |config| Checks::RedisCheck.new(config) }
-      # checks << Checks::MemoryCheck.new
+      checks << Checks::MemoryCheck.new
 
       Thread.new do
-        elapsed_time = 0
+        loop do
+          elapsed_time = 0
 
-        failed = false
+          failed = false
 
-        checks.each do |check|
-          elapsed_time = Benchmark.measure { check.run }
-          logger.info "Time elapsed for #{check} was #{elapsed_time}"
-        rescue => e
-          logger.error e
-          logger.info "Time elapsed for #{check} was #{elapsed_time}"
+          checks.each do |check|
+            elapsed_time = Benchmark.measure { check.run }
+            logger.info "Time elapsed for #{check} was #{elapsed_time}"
+          rescue => e
+            logger.error e
+            logger.info "Time elapsed for #{check} was #{elapsed_time}"
 
-          failed = true
-          break
+            failed = true
+            break
+          end
+
+          handle_success unless failed
+
+          sleep sleep_seconds
         end
-
-        failed ? handle_fail : handle_success
-
-        sleep sleep_seconds
       end
-    end
-
-    def handle_fail
-      FileUtils.rm(STATUS_FILE)
     end
 
     def handle_success
